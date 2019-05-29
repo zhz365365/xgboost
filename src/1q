@@ -1,0 +1,170 @@
+import xgboost as xgt
+import numpy as np
+import pandas as pd
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+
+_label_map={
+	'Iris-setosa':0,
+	'Iris-versicolor':1,
+	'Iris-virginica':2,
+}
+class BoosterTest:
+	def __init__(self):
+		df = pd.read_csv('../data/iris.csv')
+		_feature_names = ['Sepal Length', 'Sepal Width', 'Petal Length', 'Petal Width']
+		x = df[_feature_names]
+		y = df['Class'].map(lambda x:_label_map[x])
+		train_X,test_X,train_Y,test_Y = train_test_split(x, y, test_size=0.3, stratify=y, shuffle=True, random_state=1)
+		self._train_matrix = xgt.DMatrix(data=train_X, label=train_Y, feature_names=_feature_names, feature_types=['float','float','float','float'])
+		self._validate_matrix = xgt.DMatrix(data=test_X, label=test_Y, feature_names=_feature_names, feature_types=['float', 'float', 'float', 'float'])
+		self._booster = xgt.Booster(
+			params={
+				'booster':'gbtree',
+				'silent':0,#打印消息
+				'eta':0.1, #学习率
+				'max_depth':5,
+				'tree_method':'exact',
+				'objective':'multi:softmax',
+				'num_class':3,
+				'eval_metric':'merror',
+				'seed':321,
+				'nthread':7,
+			},
+			cache=[
+				self._train_matrix,
+				self._validate_matrix
+			]
+		)
+	def test_attribute(self):
+		self._booster.set_attr(key1= '1')
+		print('attr:key1 -> ',self._booster.attr('key1'))
+		print('attr:key2 -> ',self._booster.attr('key2'))
+		print('attributes -> ',self._booster.attributes())
+	def test_dump_model(self):
+		_dump_str=self._booster.get_dump(fmap='../model/booster.feature', with_stats=True, dump_format='text')
+		print('dump:',_dump_str[0][:20]+'...' if _dump_str else [])
+		self._booster.dump_model('../model/booster.model', fmap='../model/booster.feature', with_stats=True)
+	def test_train(self):
+		print('start train!')
+		for i in range(0, 100):
+			self._booster.update(self._train_matrix,iteration=i)
+			print(self._booster.eval(self._train_matrix, name='train', iteration=i))
+			print(self._booster.eval(self._validate_matrix, name='eval', iteration=i))
+	def test_importance(self):
+		print('fscore:',self._booster.get_fscore('../model/booster.feature'))
+		print('score.weight:', self._booster.get_score(importance_type='weight'))
+		print('score.gain:', self._booster.get_score(importance_type='gain'))
+	def test(self):
+		self.test_attribute()
+		# attr:key1 ->  1
+		# attr:key2 ->  None
+		# attributes ->  {'key1': '1'}
+		self.test_dump_model()
+		# dump: []
+		self.test_train()
+		# [0]   train-auc:0.980816
+		# [0]   eval-auc:0.933333
+		# ...
+		# [99]  train-auc:0.998367
+		# [99]  eval-auc:0.995556
+		self.test_dump_model()
+		# dump: 0:[f2<4.85] yes=1,no...
+		self.test_importance()
+		# score: {'f2': 80, 'f3': 72, 'f0': 6, 'f1': 5}
+		# score.weight: {'Petal Length': 80, 'Petal Width': 72, 'Sepal Length': 6, 'Sepal Width': 5}
+		# score.gain: {'Petal Length': 3.6525380337500004, 'Petal Width': 2.2072901486111114, 'Sepal Length': 0.06247816666666667, 'Sepal Width': 0.09243024}
+
+class TrainTest:
+	def __init__(self):
+		df = pd.read_csv('../data/iris.csv')
+		_feature_names = ['Sepal Length', 'Sepal Width', 'Petal Length', 'Petal Width']
+		x = df[_feature_names]
+		y = df['Class'].map(lambda x: _label_map[x])
+		train_X, test_X, train_Y, test_Y = train_test_split(x, y, test_size=0.3, stratify=y, shuffle=True, random_state=1)
+		self._train_matrix = xgt.DMatrix(data=train_X, label=train_Y, feature_names=_feature_names, feature_types=['float', 'float', 'float', 'float'])
+		self._validate_matrix = xgt.DMatrix(data=test_X, label=test_Y, feature_names=_feature_names, feature_types=['float', 'float', 'float', 'float'])
+	def train_test(self):
+		params={
+			'booster':'gbtree',
+			'eta':0.01,
+			'max_depth':5,
+			'tree_method':'exact',
+			'objective':'multi:softmax',
+			'num_class':3,
+			'eval_metric':['merror']
+		}
+		eval_rst={}
+		booster=xgt.train(params, self._train_matrix, num_boost_round=20,
+						  evals=([(self._train_matrix,'valid1'), (self._validate_matrix,'valid2')]),
+						  early_stopping_rounds=5, evals_result=eval_rst, verbose_eval=True)
+		print('booster attributes:',booster.attributes())
+		print('fscore:', booster.get_fscore())
+		print('eval_rst:',eval_rst) 
+	def cv_test(self):
+		params = {
+			'booster': 'gbtree',
+			'eta': 0.01,
+			'max_depth': 5,
+			'tree_method': 'exact',
+			'objective':'multi:softmax',
+			'num_class':3,
+			'eval_metric':['merror']
+		}
+		eval_history = xgt.cv(params, self._train_matrix, num_boost_round=20, nfold=3, stratified=True,
+							  metrics=['merror'], early_stopping_rounds=5, verbose_eval=True, shuffle=True)
+		print('eval_history:', eval_history)
+
+class SKLTest:
+	def __init__(self):
+		df = pd.read_csv('../data/iris.csv')
+		_feature_names = ['Sepal Length', 'Sepal Width', 'Petal Length', 'Petal Width']
+		x = df[_feature_names]
+		y = df['Class'].map(lambda x: _label_map[x])
+		self.train_X, self.test_X, self.train_Y, self.test_Y = \
+			train_test_split(x, y, test_size=0.3, stratify=y, shuffle=True, random_state=1)
+	def train_test(self):
+		clf=xgt.XGBClassifier(max_depth=3, learning_rate=0.1, n_estimators=100)
+		clf.fit(self.train_X, self.train_Y, eval_metric='merror', eval_set=[(self.test_X, self.test_Y),], early_stopping_rounds=3)
+		print('evals_result:', clf.evals_result())
+		print('predict:', clf.predict(self.test_X))
+
+class PlotTest:
+	def __init__(self):
+		df = pd.read_csv('../data/iris.csv')
+		_feature_names = ['Sepal Length', 'Sepal Width', 'Petal Length', 'Petal Width']
+		x = df[_feature_names]
+		y = df['Class'].map(lambda x: _label_map[x])
+		train_X, test_X, train_Y, test_Y = train_test_split(x, y, test_size=0.3, stratify=y, shuffle=True, random_state=1)
+		self._train_matrix = xgt.DMatrix(data=train_X, label=train_Y, feature_names=_feature_names, feature_types=['float', 'float', 'float', 'float'])
+		self._validate_matrix = xgt.DMatrix(data=test_X, label=test_Y, feature_names=_feature_names, feature_types=['float', 'float', 'float', 'float'])
+	def plot_test(self):
+		params = {
+			'booster': 'gbtree',
+			'eta': 0.01,
+			'max_depth': 5,
+			'tree_method': 'exact',
+			'objective': 'multi:softmax',
+			'num_class':3,
+			'eval_metric': ['merror']
+		}
+		eval_rst = {}
+		booster = xgt.train(params, self._train_matrix, num_boost_round=20, 
+							evals=([(self._train_matrix, 'valid1'), (self._validate_matrix, 'valid2')]),
+							early_stopping_rounds=5, evals_result=eval_rst, verbose_eval=True)
+		xgt.plot_importance(booster)
+		plt.savefig('../visual/importance.png')
+		plt.close()
+
+if __name__ == '__main__':
+	Booster = BoosterTest()
+	Booster.test()
+	Train = TrainTest()
+	Train.train_test()
+	Train.cv_test()
+	SKL = SKLTest()
+	SKL.train_test()
+	Plot = PlotTest()
+	Plot.plot_test()
